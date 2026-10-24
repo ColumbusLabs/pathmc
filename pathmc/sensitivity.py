@@ -71,7 +71,9 @@ class SensitivityResult(ResultReprMixin):
         shape ``(n_gamma, n_delta)``.
     prob_sign_change : np.ndarray
         Posterior probability that the ATE sign flips at each grid
-        point, shape ``(n_gamma, n_delta)``.
+        point: the fraction of draws whose adjusted ATE does not have the
+        observed mean's sign (an adjusted ATE of exactly 0 counts as a
+        flip), shape ``(n_gamma, n_delta)``.
     """
 
     outcome: str
@@ -268,14 +270,19 @@ def compute_sensitivity(
     n_draws = len(sorted_draws)
     flat_bias = bias_grid.ravel()
 
-    if abs(observed_mean) < 1e-15:
-        prob_sign_flat = np.full(flat_bias.shape, 0.5, dtype=float)
-    elif observed_mean > 0:
-        idx = np.searchsorted(sorted_draws, flat_bias).astype(float)
-        prob_sign_flat = idx / n_draws
+    # A draw's adjusted ATE is ``draw - bias``. It has changed sign when it no
+    # longer has the observed mean's sign; an adjusted value of exactly 0
+    # counts as a change.
+    if observed_mean > 0:
+        # draw - bias <= 0  <=>  draw <= bias
+        n_changed = np.searchsorted(sorted_draws, flat_bias, side="right")
+    elif observed_mean < 0:
+        # draw - bias >= 0  <=>  draw >= bias
+        n_changed = n_draws - np.searchsorted(sorted_draws, flat_bias, side="left")
     else:
-        idx = np.searchsorted(sorted_draws, flat_bias, side="right").astype(float)
-        prob_sign_flat = 1.0 - idx / n_draws
+        # An observed mean of exactly 0 has no sign for any draw to keep.
+        n_changed = np.full(flat_bias.shape, n_draws)
+    prob_sign_flat = n_changed.astype(float) / n_draws
 
     prob_sign = prob_sign_flat.reshape(G.shape)
 

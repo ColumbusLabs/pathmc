@@ -134,6 +134,44 @@ class TestComputeSensitivity:
         assert result.adjusted_ate_mean[0, 0] < 0
         assert result.prob_sign_change[0, 0] < 0.01
 
+    def test_tiny_mean_is_not_painted_with_one_half(self):
+        # A mean below 1e-15 is still positive: no draw has flipped at bias 0,
+        # and every draw has flipped once the bias reaches it.
+        draws = np.full(3, 1e-16)
+        result = compute_sensitivity(draws, "Y", "T", (0.0, 1.0), (0.0, 1.0), 3)
+        assert result.prob_sign_change[0, 0] == 0.0
+        assert result.prob_sign_change[2, 2] == 1.0
+        assert not np.any(result.prob_sign_change == 0.5)
+
+    def test_zero_adjusted_ate_counts_as_sign_change(self):
+        # gamma = 2, delta = 1: bias 2 brings a draw of 2 to exactly 0.
+        pos = compute_sensitivity(np.array([2.0]), "Y", "T", (0.0, 2.0), (0.0, 2.0), 3)
+        assert pos.adjusted_ate_mean[2, 1] == 0.0
+        assert pos.prob_sign_change[2, 1] == 1.0
+        # gamma = -2, delta = 1: bias -2 brings a draw of -2 to exactly 0.
+        neg = compute_sensitivity(
+            np.array([-2.0]), "Y", "T", (-2.0, 0.0), (0.0, 2.0), 3
+        )
+        assert neg.adjusted_ate_mean[0, 1] == 0.0
+        assert neg.prob_sign_change[0, 1] == 1.0
+
+    def test_exactly_zero_mean_has_no_sign_to_keep(self):
+        result = compute_sensitivity(
+            np.array([-1.0, 1.0]), "Y", "T", (0.0, 1.0), (0.0, 1.0), 3
+        )
+        np.testing.assert_array_equal(result.prob_sign_change, np.ones((3, 3)))
+
+    @pytest.mark.parametrize("sign", [1.0, -1.0])
+    def test_prob_sign_change_matches_numpy_oracle(self, sign):
+        # Draws on a 0.25 grid so many land exactly on a grid point's bias.
+        rng = np.random.default_rng(3)
+        draws = sign * rng.integers(-2, 9, size=200) / 4.0
+        result = compute_sensitivity(draws, "Y", "T", (-1.0, 1.0), (-2.0, 2.0), 9)
+        bias = np.multiply.outer(result.gamma_values, result.delta_values)
+        adjusted = draws[None, None, :] - bias[..., None]
+        flipped = (np.sign(adjusted) != np.sign(draws.mean())) | (adjusted == 0)
+        np.testing.assert_array_equal(result.prob_sign_change, flipped.mean(axis=-1))
+
 
 class TestSensitivityResult:
     """Test the SensitivityResult dataclass."""
